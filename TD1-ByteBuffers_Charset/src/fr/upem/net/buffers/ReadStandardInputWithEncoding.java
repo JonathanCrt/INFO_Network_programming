@@ -32,7 +32,7 @@ public class ReadStandardInputWithEncoding {
             while (channel.read(buff) != -1) { // Tant que la lecture du fileChannel ne renvoie pas -1.
                 if (!buff.hasRemaining()) { // Si tous les octets ont etes lus
                     int newCapacity = buff.capacity() * 2; // On double la capacite
-                    ByteBuffer.allocate(newCapacity).put(buff.flip()); // Et on alloue un nouveau buffer avec
+                    buff = ByteBuffer.allocate(newCapacity).put(buff.flip()); // Et on alloue un nouveau buffer avec
                     // une nouvelle capacite et on ecrit les octets du buffers relus
                 }
 
@@ -47,7 +47,7 @@ public class ReadStandardInputWithEncoding {
             return;
         }
         Charset cs = Charset.forName(args[0]);
-        System.out.print(this.stringFromStandardInput(cs));
+        System.out.print(stringFromStandardInput(cs));
 
 
     }
