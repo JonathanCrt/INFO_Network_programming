@@ -3,10 +3,14 @@ package fr.upem.net.udp;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.nio.BufferOverflowException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.charset.Charset;
+import java.nio.charset.IllegalCharsetNameException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.UnsupportedCharsetException;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.logging.Logger;
@@ -31,7 +35,20 @@ public class ClientBetterUpperCaseUDP {
      * @return the String represented by buffer, or nothing if the buffer cannot be decoded
      */
     public static Optional<String> decodeMessage(ByteBuffer buffer) {
-        return null;
+        try {
+            var charsetBuffer = ByteBuffer.allocate(buffer.flip().getInt()); //Allocation
+            while (charsetBuffer.hasRemaining()) { // Tant que on a accés
+                charsetBuffer.put(buffer.get()); // On met les bytes dans le nouveau charsetBuffer
+            }
+            var st = Optional.of(
+                    Charset.forName(ASCII_CHARSET.decode(charsetBuffer.flip()).toString())
+                            .decode(buffer).toString());
+            return st;
+        } catch (BufferUnderflowException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+
+
     }
 
     /**
@@ -51,19 +68,23 @@ public class ClientBetterUpperCaseUDP {
      * or Optional.empty if the buffer would be larger than 1024
      */
     public static Optional<ByteBuffer> encodeMessage(String msg, String charsetName) {
+        try {
+            var buff = ByteBuffer.allocate(MAX_PACKET_SIZE);
+            var encodedMsg =
+                    Optional.of(
+                            buff.putInt(charsetName.length())
+                                    .put(ASCII_CHARSET.encode(charsetName))
+                                    .put(Charset.forName(charsetName).encode(msg))
+                    );
+            buff.flip();
+            if (buff.remaining() > MAX_PACKET_SIZE) {
+                return Optional.empty();
+            }
+            return encodedMsg;
+        } catch (BufferOverflowException | IllegalArgumentException  e) {
+            return Optional.empty();
+        }
 
-        var buff = ByteBuffer.allocate(MAX_PACKET_SIZE);
-        var encodeMsg =
-				Optional.of(
-                buff.putInt(charsetName.length())
-                        .put(ASCII_CHARSET.encode(charsetName))
-                        .put(Charset.forName(charsetName).encode(msg))
-				);
-        buff.flip();
-        if(buff.remaining() > MAX_PACKET_SIZE){
-        	return Optional.empty();
-		}
-        return encodeMsg;
     }
 
     public static void usage() {
