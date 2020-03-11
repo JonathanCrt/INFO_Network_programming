@@ -88,7 +88,9 @@ public class ClientBetterUpperCaseUDP {
 		var sizeOfCharsetNameASCII = ASCII_CHARSET.encode(charsetName).remaining();
 		var bytesEncodingCharsetName = ASCII_CHARSET.encode(charsetName);
 		var bytesEncodingMessage = Charset.forName(charsetName).encode(msg);
-
+		
+		
+		//remaining plutot
 		var bytesEncodedCapacity = bytesEncodingCharsetName.capacity() + bytesEncodingMessage.capacity();
 
 		if ((Byte.BYTES + bytesEncodedCapacity) > MAX_PACKET_SIZE) {
