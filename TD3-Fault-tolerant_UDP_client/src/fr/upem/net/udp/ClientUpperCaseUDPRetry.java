@@ -9,13 +9,11 @@ import java.nio.charset.Charset;
 import java.util.Scanner;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class ClientUpperCaseUDPTimeout {
-
+public class ClientUpperCaseUDPRetry {
 	public static final int BUFFER_SIZE = 1024;
-	private static final Logger LOGGER = Logger.getLogger(ClientUpperCaseUDPTimeout.class.getName());
+	private static final Logger LOGGER = Logger.getLogger(ClientUpperCaseUDPRetry.class.getName());
 
 	private static void usage() {
 		System.out.println("Usage : NetcatUDP host port charset");
@@ -46,7 +44,7 @@ public class ClientUpperCaseUDPTimeout {
 					receivedData.clear();
 
 					try {
-						dc.receive(receivedData);
+						dc.receive(receivedData); //receive dc via a channel
 					} catch (AsynchronousCloseException e) {
 						LOGGER.warning("Asynchronous Exception");
 					} catch (IOException e) {
@@ -54,7 +52,7 @@ public class ClientUpperCaseUDPTimeout {
 					}
 
 					try {
-						var decodedCharsetBuffer = cs.decode(receivedData);
+						var decodedCharsetBuffer = cs.decode(receivedData); // decode buffer
 						decodedCharsetBuffer.flip();
 						blockingQueue.put(decodedCharsetBuffer.toString());
 					} catch (InterruptedException e) {
@@ -73,17 +71,14 @@ public class ClientUpperCaseUDPTimeout {
 			while (scan.hasNextLine()) {
 				String msgLine = null;
 				bb = cs.encode(scan.nextLine()); // encode line to bytes
-				dc.send(bb, server); // send dataChannel
-				msgLine = blockingQueue.poll(1, TimeUnit.SECONDS); // Retrieves & removes Return the head of the queue
-																	// or null
-				bb.flip();
 
-				if (msgLine == null) {
-					LOGGER.info("Server did not respond in time.");
-				} else {
-					System.out.println("Received message : " + msgLine);
-
+				while (msgLine == null) {
+					dc.send(bb, server); // send dataChannel
+					msgLine = blockingQueue.poll(1, TimeUnit.SECONDS); // Retrieves & removes (Return) the head of the
+																		// queue or null
+					bb.flip();
 				}
+				System.out.println("Received message : " + msgLine);
 			}
 			listenerThread.interrupt();
 
