@@ -52,51 +52,51 @@ public class ClientUpperCaseUDPFile {
 
 		var queue = new ArrayBlockingQueue<String>(20);
 
-		try (var datagramChannel = DatagramChannel.open()) {
-			datagramChannel.bind(null);
+		var datagramChannel = DatagramChannel.open();
 
-			var listenerThread = new Thread(() -> {
-				var receivedData = ByteBuffer.allocate(BUFFER_SIZE);
-				while (!Thread.currentThread().isInterrupted()) {
-					receivedData.clear();
+		var listenerThread = new Thread(() -> {
+			var receivedData = ByteBuffer.allocate(BUFFER_SIZE);
+			while (!Thread.currentThread().isInterrupted()) {
+				receivedData.clear();
 
-					try {
-						datagramChannel.receive(receivedData); // receive dc via a channel
-					} catch (AsynchronousCloseException e) {
-						LOGGER.warning("Asynchronous Exception");
-					} catch (IOException e) {
-						LOGGER.warning("Some I/O errors was occured.");
-					}
-
-					try {
-						var decodedCharsetBuffer = UTF8.decode(receivedData); // decode buffer
-						decodedCharsetBuffer.flip();
-						queue.put(decodedCharsetBuffer.toString());
-					} catch (InterruptedException e) {
-						LOGGER.info("The Listener thread was interrupted.");
-					}
-
+				try {
+					datagramChannel.receive(receivedData); // receive dc via a channel
+				} catch (AsynchronousCloseException e) {
+					LOGGER.warning("Asynchronous Exception");
+				} catch (IOException e) {
+					LOGGER.warning("Some I/O errors was occured.");
 				}
-			});
-			listenerThread.start();
 
-			/**
-			 * SENDER THREAD
-			 */
-			for (String line : lines) { // For each line of List
-				String msgLine = null; // msg init
-				var encodedBufferToSend = UTF8.encode(line); // we encode data into buffer
-				while (msgLine == null) {
-					datagramChannel.send(encodedBufferToSend, dest);
-					msgLine = queue.poll(timeout, TimeUnit.MILLISECONDS);
-					encodedBufferToSend.flip();
+				try {
+					var decodedCharsetBuffer = UTF8.decode(receivedData); // decode buffer
+					// decodedCharsetBuffer.flip();
+					queue.put(decodedCharsetBuffer.toString());
+				} catch (InterruptedException e) {
+					LOGGER.info("The Listener thread was interrupted.");
 				}
-				upperCaseLines.add(msgLine); // add line to ArrayList
 			}
-			listenerThread.interrupt();
+		});
+		listenerThread.start();
 
+		// datagramChannel.bind(null);
+
+		/**
+		 * SENDER THREAD
+		 */
+		for (var line : lines) { // For each line of List
+			var encodedBufferToSend = UTF8.encode(line); // we encode data into buffer
+			datagramChannel.send(encodedBufferToSend, dest);
+
+			String msgLine = null; // msg init
+			while ((msgLine = queue.poll(timeout, TimeUnit.MILLISECONDS)) == null) {
+				encodedBufferToSend.flip();
+				datagramChannel.send(encodedBufferToSend, dest);
+			}
+			upperCaseLines.add(msgLine); // add line to ArrayList
 		}
 
+		datagramChannel.close();
+		listenerThread.interrupt();
 		// Write upperCaseLines to outFilename in UTF-8
 		Files.write(Paths.get(outFilename), upperCaseLines, UTF8, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
 				StandardOpenOption.TRUNCATE_EXISTING);
