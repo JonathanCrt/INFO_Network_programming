@@ -5,23 +5,16 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
-import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.DatagramChannel;
-import java.nio.channels.FileChannel;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Scanner;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 public class ClientUpperCaseUDPFile {
 
@@ -54,25 +47,19 @@ public class ClientUpperCaseUDPFile {
 
 		var datagramChannel = DatagramChannel.open();
 
-		var listenerThread = new Thread(() -> {
+		Thread listenerThread = new Thread(() -> {
 			var receivedData = ByteBuffer.allocate(BUFFER_SIZE);
 			while (!Thread.currentThread().isInterrupted()) {
 				receivedData.clear();
-
 				try {
 					datagramChannel.receive(receivedData); // receive dc via a channel
-				} catch (AsynchronousCloseException e) {
-					LOGGER.warning("Asynchronous Exception");
-				} catch (IOException e) {
-					LOGGER.warning("Some I/O errors was occured.");
-				}
-
-				try {
-					var decodedCharsetBuffer = UTF8.decode(receivedData); // decode buffer
-					// decodedCharsetBuffer.flip();
-					queue.put(decodedCharsetBuffer.toString());
+					receivedData.flip();
+					queue.put(UTF8.decode(receivedData).toString());
 				} catch (InterruptedException e) {
 					LOGGER.info("The Listener thread was interrupted.");
+					return;
+				} catch (IOException e) {
+					return;
 				}
 			}
 		});
@@ -84,15 +71,28 @@ public class ClientUpperCaseUDPFile {
 		 * SENDER THREAD
 		 */
 		for (var line : lines) { // For each line of List
-			var encodedBufferToSend = UTF8.encode(line); // we encode data into buffer
-			datagramChannel.send(encodedBufferToSend, dest);
 
-			String msgLine = null; // msg init
-			while ((msgLine = queue.poll(timeout, TimeUnit.MILLISECONDS)) == null) {
-				encodedBufferToSend.flip();
+			try {
+				var encodedBufferToSend = UTF8.encode(line); // we encode data into buffer
 				datagramChannel.send(encodedBufferToSend, dest);
+
+				String msgLine = null; // msg init
+				while ((msgLine = queue.poll(timeout, TimeUnit.MILLISECONDS)) == null) {
+					encodedBufferToSend.flip();
+					datagramChannel.send(encodedBufferToSend, dest);
+				}
+				upperCaseLines.add(msgLine); // add line to ArrayList
+			} catch (InterruptedException e) {
+				LOGGER.warning("IntteruptedException");
+				return;
+			} catch (IOException e) {
+				LOGGER.warning("Some I/O Exceptions was occured");
+				System.out.println("bb");
+				return;
+			} catch (Exception e) {
+				return;
 			}
-			upperCaseLines.add(msgLine); // add line to ArrayList
+
 		}
 
 		datagramChannel.close();
