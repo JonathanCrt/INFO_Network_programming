@@ -6,6 +6,7 @@ import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.AsynchronousCloseException;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.DatagramChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -56,13 +57,18 @@ public class ClientIdUpperCaseUDPOneByOne {
 			while (!Thread.currentThread().isInterrupted()) {
 				receivedData.clear();
 				dc.receive(receivedData);
+				receivedData.flip();
+				var id = receivedData.getLong();
 				var decodedData = UTF8.decode(receivedData).toString(); // The buffer contains long id
-				queue.put(new Response(receivedData.flip().getLong(), decodedData));
+				queue.put(new Response(id, decodedData)); // put response into
+															// queue with id
+															// + msg
 			}
+		} catch (InterruptedException | AsynchronousCloseException e) {
+			logger.info("Listener thread was interrupted");
+			return;
 		} catch (IOException e) {
-			logger.log(Level.SEVERE, "Some I/O error was occured.", e);
-		} catch (InterruptedException e) {
-			logger.info("Listener thread was occurred ! ");
+			logger.log(Level.WARNING, "Some I/O errors was occured.", e);
 		}
 	}
 
@@ -92,32 +98,29 @@ public class ClientIdUpperCaseUDPOneByOne {
 		Thread listenerThread = new Thread(this::listenerThreadRun);
 		listenerThread.start();
 
-		try {
+		var id = 0;
+		long lastSend = 0;
+		var sentDataBuffer = ByteBuffer.allocate(BUFFER_SIZE);
 
-			var sentDataBuffer = ByteBuffer.allocate(BUFFER_SIZE);
+		for (var line : lines) {
 
-			for (var line : lines) {
-				var id = 0;
-				
-				Long currentTime = System.currentTimeMillis();
-				var lastSend;
-				if(currentTime - las >= timeout)
-				
-				sentDataBuffer.clear();
-				var encodedLine = UTF8.encode(line);
-				sentDataBuffer.putLong(id++).put(encodedLine); // Encode create a ByteBuffer
-				Response res = null;
-				while (res == null || res.id != -1) {
+			sentDataBuffer.clear();
+			var encodedLine = UTF8.encode(line);
+			sentDataBuffer.putLong(id++).put(encodedLine); // Encode create a ByteBuffer
+			Response response = null;
+			while (response == null || response.id != id - 1) {
+				var currentTime = System.currentTimeMillis();
+
+				if (currentTime - lastSend >= timeout) {
 					dc.send(sentDataBuffer.flip(), serverAddress);
-					res = queue.poll(timeout, TimeUnit.MILLISECONDS);
-
+					lastSend = currentTime;
 				}
-				upperCaseLines.add(res.msg);
-			}
+				response = queue.poll(timeout - (currentTime - lastSend), TimeUnit.MILLISECONDS);
 
-		} catch (BufferOverflowException e) {
-			logger.severe("The capacity of the buffer is overflow ");
+			}
+			upperCaseLines.add(response.msg);
 		}
+
 		listenerThread.interrupt();
 		dc.close();
 
