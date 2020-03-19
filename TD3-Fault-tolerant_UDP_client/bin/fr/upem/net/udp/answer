@@ -1,0 +1,1 @@
+-->  Le retour du serveur crois que les paquets IP sont perdu et les renvoi.En effet, le timeout est trop court vu que le server a deja un delai de 300ms.
