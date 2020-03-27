@@ -12,7 +12,7 @@ import java.util.logging.Logger;
 
 /**
  * Classe qui posséde plusieurs datagramChannel qui vont être "bindés" sur une
- * plage de ports, impliquantune suveillance de plusieurs datagramChannel par le
+ * plage de ports, impliquant une suveillance de plusieurs datagramChannel par le
  * Selecteur.
  * 
  * @author jonat
