@@ -3,12 +3,12 @@ package fr.upem.net.udp.nonblocking;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.logging.Logger;
+
 
 /**
  * Classe qui posséde plusieurs datagramChannel qui vont être "bindés" sur une
@@ -36,8 +36,11 @@ public class ServerEchoMultiPort {
 			var dc = DatagramChannel.open();
 			dc.bind(new InetSocketAddress(i)); 
 			dc.configureBlocking(false);
-			dc.register(selector, SelectionKey.OP_READ, new Context()); // On attend la réception de paquets
+			var key = dc.register(selector, SelectionKey.OP_READ); // On attend la réception de paquets
+			key.attach(new Context(key));
+			
 		}
+		
 	}
 
 	/**
@@ -62,7 +65,42 @@ public class ServerEchoMultiPort {
 	 */
 	private class Context {
 		private final ByteBuffer buff = ByteBuffer.allocateDirect(BUFFER_SIZE);
-		private SocketAddress exp; // InetSocketAdress extends SocketAdress
+		private InetSocketAddress exp;
+		private SelectionKey key;
+		private DatagramChannel dc;
+		
+		Context(SelectionKey key) {
+			this.dc = (DatagramChannel) key.channel(); // selectionKey.channel = getter pour le lire le dc associé à la clé
+			this.key = key;
+		}
+		
+		public void doRead() throws IOException {
+
+			buff.clear(); // toujours av le receive
+			exp = (InetSocketAddress) dc.receive(buff);
+			buff.flip(); // flip à la réception
+			
+			if(exp != null) {
+				key.interestOps(SelectionKey.OP_WRITE); // getter pour l'envoi
+			} else {
+				logger.warning("The selector gave a wrong hint (OP_READ)."); //Le selecteur s'est trompé
+			}
+		}
+		
+		public void doWrite() throws IOException {
+
+			dc.send(buff, exp);
+			
+			if(!buff.hasRemaining()) {
+				key.interestOps(SelectionKey.OP_READ);
+			} else {
+				logger.warning("The selector gave a wrong hint (OP_WRITE)."); //Le selecteur s'est trompé
+			}
+			
+		}
+		
+		
+		
 	}
 
 	/**
@@ -87,18 +125,36 @@ public class ServerEchoMultiPort {
 	private void treatKey(SelectionKey key) {
 		try {
 			if (key.isValid() && key.isWritable()) { // Est-ce qu'on peut faire un write sur cette clé ?
-				doWrite(key);
+				var context = (Context) key.attachment();//Je récupére le contexte attaché à ma clé 
+				context.doWrite();
 			}
 			if (key.isValid() && key.isReadable()) { // Est-ce que la clé peut recevoir ?
-				doRead(key);
+				var context = (Context) key.attachment();//Je récupére le contexte attaché à ma clé 
+				context.doRead();
 			}
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
 
 	}
+	
+	public static void usage() {
+		System.out.println("Usage : ServerEchoMultiPort port_debut_plage  port_fin_plage");
+	}
 
+	public static void main(String[] args) throws IOException {
+		if (args.length != 2 || Integer.valueOf(args[0]) > Integer.valueOf(args[1])) {
+			usage();
+			return;
+		}
+		ServerEchoMultiPort server = new ServerEchoMultiPort(Integer.valueOf(args[0]), Integer.valueOf(args[1]));
+		server.serve();
+	}
+	
+	/*
 	private void doRead(SelectionKey key) throws IOException {
+	
+		// version corrigee
 		var dc = (DatagramChannel) key.channel(); // selectionKey.channel = getter pour le lire le dc associé à la clé
 		var context = (Context) key.attachment(); // Attachement : Retourne l'objet couramment attaché à la clé
 		var buff = context.buff; // recupére le buffer avec son contexte dans une variable
@@ -112,7 +168,8 @@ public class ServerEchoMultiPort {
 		} else {
 			logger.warning("The selector gave a wrong hint (OP_READ)."); //Le selecteur s'est trompé
 		}
-		/*
+		
+		// 1ere version : 
 		var context = (Context) key.attachment(); 
 		context.buff.clear(); 
 		context.exp = ((DatagramChannel) key.channel()).receive(context.buff); 
@@ -123,10 +180,12 @@ public class ServerEchoMultiPort {
 		}
 		context.buff.flip(); 
 		key.interestOps(SelectionKey.OP_WRITE);
-		*/
+		
 	}
-
+	
+	
 	private void doWrite(SelectionKey key) throws IOException {
+		// version corrigee
 		var dc = (DatagramChannel) key.channel(); // selectionKey.channel = getter pour le lire le dc associé à la clé
 		var context = (Context) key.attachment(); // Attachement : Retourne l'objet couramment attaché à la clé
 		var buff = context.buff; // recupére le buffer avec son contexte dans une variable
@@ -138,25 +197,16 @@ public class ServerEchoMultiPort {
 		} else {
 			logger.warning("The selector gave a wrong hint (OP_WRITE)."); //Le selecteur s'est trompé
 		}
-		/*
+		
+		// 1ere version
 		var context = (Context) key.attachment(); 
 		((DatagramChannel) key.channel()).send(context.buff, context.exp);
 		if (context.buff.hasRemaining()) {
 			return;
 		}
-		*/
+		
 	}
+	*/
 
-	public static void usage() {
-		System.out.println("Usage : ServerEchoMultiPort port_debut_plage  port_fin_plage");
-	}
-
-	public static void main(String[] args) throws IOException {
-		if (args.length != 2 || Integer.valueOf(args[0]) > Integer.valueOf(args[1])) {
-			usage();
-			return;
-		}
-		ServerEchoMultiPort server = new ServerEchoMultiPort(Integer.valueOf(args[0]), Integer.valueOf(args[1]));
-		server.serve();
-	}
+	
 }
