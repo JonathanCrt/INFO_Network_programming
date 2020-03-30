@@ -80,7 +80,7 @@ public class ServerEchoPlus {
 			return;
 		}
 		buffRec.flip(); // on flip() le buffer de réception et on rempli le buffer d'envoi ensuite
-		buffRec.clear();
+		buffSend.clear();
 		while(buffRec.hasRemaining()) { // on parcours le buffer de réception jusqu'a avoir épuisé la zone de travail
 			buffSend.put((byte) (buffRec.get() + 1 %255)); // On put dans le bufferSend des données incrémentées 1 modulo 255
 		}
