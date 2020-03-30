@@ -10,43 +10,46 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Set;
 import java.util.logging.Logger;
 
-public class ClientIdUpperCaseUDPOneByOne {
 
-	private static Logger logger = Logger.getLogger(ClientIdUpperCaseUDPOneByOne.class.getName());
+public class ClientIdUpperCaseUDPBurst {
+
+	private static Logger logger = Logger.getLogger(ClientIdUpperCaseUDPBurst.class.getName());
 	private static final Charset UTF8 = Charset.forName("UTF8");
 	private static final int BUFFER_SIZE = 1024;
 
-	private enum State {
-		SENDING, RECEIVING, FINISHED
-	};
+	private enum State {SENDING, RECEIVING, FINISHED};
 
 	private final List<String> lines;
-	private final List<String> upperCaseLines = new ArrayList<>();
+	private final String[] upperCaseLines;
 	private final int timeout;
 	private final InetSocketAddress serverAddress;
 	private final DatagramChannel dc;
 	private final Selector selector;
 	private final SelectionKey uniqueKey;
-	private int currentPacketID;
 	
-	private final ByteBuffer senderBuffer = ByteBuffer.allocateDirect(BUFFER_SIZE); // allocateDirect = buffer qui vivent totue la durée du prog.
+	private final ByteBuffer senderBuffer = ByteBuffer.allocateDirect(BUFFER_SIZE);
 	private final ByteBuffer receivedBuffer = ByteBuffer.allocateDirect(BUFFER_SIZE);
-	
-	private State state;
 	private long lastSend;
+	private final BitSet receivedSet; // BitSet marking received requests
+	private int numberOfLinesReceived;
+	private final int nbLines;
+
+	private State state;
 
 	private static void usage() {
-		System.out.println("Usage : ClientIdUpperCaseUDPOneByOne in-filename out-filename timeout host port ");
+		System.out.println("Usage : ClientIdUpperCaseUDPBurst in-filename out-filename timeout host port ");
 	}
 
-	public ClientIdUpperCaseUDPOneByOne(List<String> lines, int timeout, InetSocketAddress serverAddress)
-			throws IOException {
+	public ClientIdUpperCaseUDPBurst(List<String> lines, int timeout, InetSocketAddress serverAddress) throws IOException {
+		nbLines = lines.size();
 		this.lines = lines;
+		upperCaseLines = new String[nbLines];
 		this.timeout = timeout;
 		this.serverAddress = serverAddress;
 		this.dc = DatagramChannel.open();
@@ -54,12 +57,10 @@ public class ClientIdUpperCaseUDPOneByOne {
 		dc.bind(null);
 		this.selector = Selector.open();
 		this.uniqueKey = dc.register(selector, SelectionKey.OP_WRITE);
+		this.receivedSet = new BitSet(nbLines);
 		this.state = State.SENDING;
-		this.senderBuffer.clear(); // On nettoie le buffer d'envoi
-		this.senderBuffer.putLong(this.currentPacketID); // on met dans le buffer l'ID du paquet courant
-		var encodedData = UTF8.encode(lines.get(this.currentPacketID)); //on encode les lignes en fonction de la ligne récupérée (ID)
-		this.senderBuffer.put(encodedData); // On met les données encodées dans le buffer d'envoi
 	}
+
 
 	public static void main(String[] args) throws IOException, InterruptedException {
 		if (args.length != 5) {
@@ -74,17 +75,20 @@ public class ClientIdUpperCaseUDPOneByOne {
 		int port = Integer.valueOf(args[4]);
 		InetSocketAddress serverAddress = new InetSocketAddress(host, port);
 
-		// Read all lines of inFilename opened in UTF-8
+		//Read all lines of inFilename opened in UTF-8
 		List<String> lines = Files.readAllLines(Paths.get(inFilename), UTF8);
-		// Create client with the parameters and launch it
-		ClientIdUpperCaseUDPOneByOne client = new ClientIdUpperCaseUDPOneByOne(lines, timeout, serverAddress);
-		List<String> upperCaseLines = client.launch();
-		Files.write(Paths.get(outFilename), upperCaseLines, UTF8, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+		//Create client with the parameters and launch it
+		ClientIdUpperCaseUDPBurst client = new ClientIdUpperCaseUDPBurst(lines, timeout, serverAddress);
+		var upperCaseLines = Arrays.asList(client.launch());
+		Files.write(Paths.get(outFilename), upperCaseLines, UTF8,
+				StandardOpenOption.CREATE,
+				StandardOpenOption.WRITE,
 				StandardOpenOption.TRUNCATE_EXISTING);
 
 	}
 
-	private List<String> launch() throws IOException, InterruptedException {
+
+	private String[] launch() throws IOException, InterruptedException {
 		Set<SelectionKey> selectedKeys = selector.selectedKeys();
 		while (!isFinished()) {
 			selector.select(updateInterestOps());
@@ -120,43 +124,47 @@ public class ClientIdUpperCaseUDPOneByOne {
 			uniqueKey.interestOps(SelectionKey.OP_READ);
 		}
 		var delay = (int) (this.lastSend + this.timeout - time); // délai à retourner
-		return delay; // Temps qu'on est prêt à passer dans le select()
+		return delay;
 	}
 
 	private boolean isFinished() {
 		return state == State.FINISHED;
 	}
 
-	
 	/**
 	 * Performs the receptions of packets
 	 *
 	 * @throws IOException
 	 */
 	private void doRead() throws IOException {
-		this.receivedBuffer.clear(); // toujours av le receive
-		var exp = this.dc.receive(this.receivedBuffer);
+		var time = System.currentTimeMillis();
 		
-		this.receivedBuffer.flip();
-		if(exp == null || this.receivedBuffer.getLong() != this.currentPacketID) {
-			logger.info("expeditor is null");
-			return;
+		while (System.currentTimeMillis() < time + timeout) {
+			this.receivedBuffer.clear(); // toujours av le receive
+			var exp = this.dc.receive(this.receivedBuffer);
+		
+			if (exp == null) {
+				logger.info("expeditor is null");
+				continue;
+			}
+			this.receivedBuffer.flip();
+			var idLine = (int) receivedBuffer.getLong();
+
+			if (!this.receivedSet.get(idLine)) {
+				var decodedData = UTF8.decode(this.receivedBuffer).toString();
+				this.upperCaseLines[idLine] = decodedData;
+				this.receivedSet.set(idLine);
+				this.numberOfLinesReceived++;
+			}			
 		}
-		logger.info("Here the ID of the received packet:  " + this.currentPacketID);
-		var decodedData = UTF8.decode(receivedBuffer).toString();
-		upperCaseLines.add(decodedData);
-		var numberOfLines = lines.size();
-		this.currentPacketID++;
-		if (this.currentPacketID == numberOfLines) { // Si l'ID courant est égal au nombre de ligne alors
+		
+		// Statuer sur l'etat du client
+		if (this.nbLines == this.numberOfLinesReceived) {
 			this.state = State.FINISHED;
-			return;
+		} else {
+			this.state = State.SENDING;
 		}
-		
-		this.senderBuffer.clear(); // On nettoie le buffer d'envoi
-		this.senderBuffer.putLong(this.currentPacketID); // on met dans le buffer l'ID du paquet courant
-		var encodedData = UTF8.encode(lines.get(this.currentPacketID)); //on encode les lignes en fonction de la ligne récupérée (ID)
-		this.senderBuffer.put(encodedData); // On met les données encodées dans le buffer d'envoi
-		this.state = State.SENDING;
+			
 	}
 
 	/**
@@ -165,19 +173,20 @@ public class ClientIdUpperCaseUDPOneByOne {
 	 * @throws IOException
 	 */
 	private void doWrite() throws IOException {
-		this.senderBuffer.flip();
 		
-		dc.send(this.senderBuffer, this.serverAddress);
-		
-		if (this.senderBuffer.hasRemaining()) {
-			// Pour pouvoir recaler au début ce qui n'a pas été "consommé" et se mettre à nouveau en position d'écrire dans le buffer d'envoi
-			this.senderBuffer.compact(); 
-			return;
+		var idLine = 0;
+		while(idLine < this.nbLines) {
+			if (!this.receivedSet.get(idLine)) {
+				this.senderBuffer.clear(); // On nettoie le buffer d'envoi
+				this.senderBuffer.putLong(idLine); // on met dans le buffer l'ID  courant
+				var encodedData = UTF8.encode(lines.get(idLine)); //on encode les lignes en fonction de la ligne récupérée (ID)
+				this.senderBuffer.put(encodedData); // On met les données encodées dans le buffer d'envoi
+				
+				this.dc.send(this.senderBuffer.flip(), this.serverAddress);
+				this.lastSend = System.currentTimeMillis();
+			}
+			idLine++;
 		}
-		logger.info("Here the ID of the packet sent :" + this.currentPacketID);
-		this.lastSend = System.currentTimeMillis();
 		this.state = State.RECEIVING;
-		
 	}
-
 }
