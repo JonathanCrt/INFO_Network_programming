@@ -118,7 +118,7 @@ public class ClientIdUpperCaseUDPBurst {
 		// Si l'etat vaut SENDING ou que le temps est supérieur à l'heure du dernier envoi + le timeout alors
 		if (this.state == State.SENDING || time > this.lastSend + this.timeout) { 
 			this.uniqueKey.interestOps(SelectionKey.OP_WRITE); // On passe en OP_WRITE
-			return 0;
+			return 0; // si select(0), alors on attend que l'envoi soit fait
 		}
 		if (state == State.RECEIVING) { // Réception
 			uniqueKey.interestOps(SelectionKey.OP_READ);
