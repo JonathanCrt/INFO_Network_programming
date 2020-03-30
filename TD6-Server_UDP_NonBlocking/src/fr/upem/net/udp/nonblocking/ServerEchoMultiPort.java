@@ -32,7 +32,7 @@ public class ServerEchoMultiPort {
 		this.portFinPlage = checkIfPortIsInvalid(portFinPlage);
 		selector = Selector.open(); // Création du selecteur
 
-		for (var i = portDebutPlage; i <= portFinPlage; i++) { // Attention port de fin de plage inclus!
+		for (var i = portDebutPlage; i <= portFinPlage; i++) { // Attention port de fin de plage inclus! Autant de dc que de ports
 			var dc = DatagramChannel.open();
 			dc.bind(new InetSocketAddress(i)); 
 			dc.configureBlocking(false);
@@ -56,7 +56,7 @@ public class ServerEchoMultiPort {
 	/**
 	 * Classe interne pour stocker pour chaque SelectionKey un ByteBuffer et une
 	 * InetSocketAdress
-	 * 
+	 * Pour chaque key on va attacher un objet Context
 	 * @author jonat
 	 *
 	 */
@@ -99,26 +99,52 @@ public class ServerEchoMultiPort {
 	}
 
 	private void doRead(SelectionKey key) throws IOException {
+		var dc = (DatagramChannel) key.channel(); // selectionKey.channel = getter pour le lire le dc associé à la clé
 		var context = (Context) key.attachment(); // Attachement : Retourne l'objet couramment attaché à la clé
-		context.buff.clear(); // toujours av le receive
-		context.exp = ((DatagramChannel) key.channel()).receive(context.buff); // selectionKey.channel = getter pour le
-																				// lire le dc associé à la clé
+		var buff = context.buff; // recupére le buffer avec son contexte dans une variable
+		
+		buff.clear(); // toujours av le receive
+		context.exp = (InetSocketAddress) dc.receive(buff);
+		buff.flip(); // flip à la réception
+		
+		if(context.exp != null) {
+			key.interestOps(SelectionKey.OP_WRITE); // getter pour l'envoi
+		} else {
+			logger.warning("The selector gave a wrong hint (OP_READ)."); //Le selecteur s'est trompé
+		}
+		/*
+		var context = (Context) key.attachment(); 
+		context.buff.clear(); 
+		context.exp = ((DatagramChannel) key.channel()).receive(context.buff); 
 
 		if (context.exp == null) {
+			logger.warning("The selector gave a wrong hint (OP_READ).");
 			return;
 		}
-		context.buff.flip(); // flip à la réception
-		key.interestOps(SelectionKey.OP_WRITE); // getter pour l'envoi
-
+		context.buff.flip(); 
+		key.interestOps(SelectionKey.OP_WRITE);
+		*/
 	}
 
 	private void doWrite(SelectionKey key) throws IOException {
+		var dc = (DatagramChannel) key.channel(); // selectionKey.channel = getter pour le lire le dc associé à la clé
 		var context = (Context) key.attachment(); // Attachement : Retourne l'objet couramment attaché à la clé
+		var buff = context.buff; // recupére le buffer avec son contexte dans une variable
+		
+		dc.send(buff, context.exp);
+		
+		if(!buff.hasRemaining()) {
+			key.interestOps(SelectionKey.OP_READ);
+		} else {
+			logger.warning("The selector gave a wrong hint (OP_WRITE)."); //Le selecteur s'est trompé
+		}
+		/*
+		var context = (Context) key.attachment(); 
 		((DatagramChannel) key.channel()).send(context.buff, context.exp);
 		if (context.buff.hasRemaining()) {
 			return;
 		}
-		key.interestOps(SelectionKey.OP_READ);
+		*/
 	}
 
 	public static void usage() {

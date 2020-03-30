@@ -10,13 +10,22 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.logging.Logger;
 
+/**
+ * Classe représentant un serveur avec le protocole EchoPlus monitoré par une seule
+ * DataGramChannel par le selecteur, ont est d'abord en OP_READ ou on attend d'être 
+ * notifié quand un paquet arrive, on effectue le read, on vérifie qu'il a fonctionner
+ * et on passe au write.
+ * @author jonat
+ *
+ */
 public class ServerEchoPlus {
 	private static final Logger logger = Logger.getLogger(ServerEcho.class.getName());
 
 	private final DatagramChannel dc;
 	private final Selector selector;
 	private final int BUFFER_SIZE = 1024;
-	private final ByteBuffer buff = ByteBuffer.allocateDirect(BUFFER_SIZE); // pour les réception
+	private final ByteBuffer buffRec = ByteBuffer.allocateDirect(BUFFER_SIZE); // pour les réception
+	private final ByteBuffer buffSend = ByteBuffer.allocateDirect(BUFFER_SIZE); // pour les envoi
 	private SocketAddress exp; // expediteur , connaitre la client qui nous a contacté
 	private int port;
 
@@ -64,26 +73,40 @@ public class ServerEchoPlus {
 	}
 
 	private void doRead(SelectionKey key) throws IOException {
-		buff.clear(); // toujours av le receive
-		exp = dc.receive(buff);
-		if (exp == null) {
+		buffRec.clear(); // toujours av le receive
+		exp = dc.receive(buffRec);
+		if (exp == null) { // on vérifie que l'expediteur est pas null
+			logger.info("The selector gave a wrong hint."); // Le selecteur s'est trompé
 			return;
 		}
-		buff.flip();
+		buffRec.flip(); // on flip() le buffer de réception et on rempli le buffer d'envoi ensuite
+		buffRec.clear();
+		while(buffRec.hasRemaining()) { // on parcours le buffer de réception jusqu'a avoir épuisé la zone de travail
+			buffSend.put((byte) (buffRec.get() + 1 %255)); // On put dans le bufferSend des données incrémentées 1 modulo 255
+		}
+		buffSend.flip();
+		key.interestOps(SelectionKey.OP_WRITE);
+		
+		/*
 		var i = buff.position();
 		while (i < buff.limit()) {
 			var incementedData = ((buff.get(i) + 1) % 255);
-			buff.put((byte) incementedData); // On put dans le buffer des données incrémentées 1 modulo 255
+			buff.put((byte) incementedData); 
 			i++;
 		}
 		buff.flip();
-		key.interestOps(SelectionKey.OP_WRITE);
-
+		*/
 	}
-
+	
+	/**
+	 * Traiter le paquet reçu
+	 * @param key
+	 * @throws IOException
+	 */
 	private void doWrite(SelectionKey key) throws IOException {
-		dc.send(buff, exp);
-		if (buff.hasRemaining()) {
+		dc.send(buffSend, exp); // Envoyer les données qui sont dans le bufferSend à l'expediteur concerné
+		if (buffSend.hasRemaining()) { // si le send a bien fonctionner
+			logger.info("The selector gave a wrong hint."); // Le selecteur s'est trompé
 			return;
 		}
 		key.interestOps(SelectionKey.OP_READ);
