@@ -137,6 +137,7 @@ public class ClientIdUpperCaseUDPOneByOne {
 		this.receivedBuffer.clear(); // toujours av le receive
 		var exp = this.dc.receive(this.receivedBuffer);
 		
+		// Pour lire toute la zone de travail		
 		this.receivedBuffer.flip();
 		if(exp == null || this.receivedBuffer.getLong() != this.currentPacketID) {
 			logger.info("expeditor is null");
