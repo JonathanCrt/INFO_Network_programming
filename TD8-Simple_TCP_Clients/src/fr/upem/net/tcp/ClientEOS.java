@@ -87,7 +87,7 @@ public class ClientEOS {
   	static boolean readFully(SocketChannel sc, ByteBuffer bb) throws IOException {
   		while (bb.hasRemaining()) {
   			if (sc.read(bb) == -1) {
-  				logger.warning("[readFully] read() return -1 ! ");
+  				logger.warning("[readFully] read() return -1 ! "); //info pas warning
   				return false;
   			}	
   		}
@@ -96,9 +96,9 @@ public class ClientEOS {
 
     public static void main(String[] args) throws IOException {
 		  InetSocketAddress google = new InetSocketAddress("www.google.fr", 80);
-		  System.out.println(getFixedSizeResponse("GET / HTTP/1.1\r\nHost: www.google.fr\r\n\r\n",
-		  		google,	512));
-		  //System.out.println(getUnboundedResponse("GET / HTTP/1.1\r\nHost: www.google.fr\r\n\r\n",
-		  //      google));
+		  //System.out.println(getFixedSizeResponse("GET / HTTP/1.1\r\nHost: www.google.fr\r\n\r\n",
+		  //		google,	512));
+		  System.out.println(getUnboundedResponse("GET / HTTP/1.1\r\nHost: www.google.fr\r\n\r\n",
+		        google));
     }
 }
