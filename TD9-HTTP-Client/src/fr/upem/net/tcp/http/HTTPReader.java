@@ -5,9 +5,9 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiFunction;
 import java.util.logging.Logger;
 
 public class HTTPReader {
@@ -16,52 +16,17 @@ public class HTTPReader {
 	private final SocketChannel sc; // sert pour lire la réponse
 	private final ByteBuffer buff; // ByteBuffer de lecture associé
 	public static final Logger logger = Logger.getLogger(HTTPReader.class.getName());
+	public static final int SIZE_BUFFER = 1024;
+	public static final int HEXA_BASE = 16;
 
 	public HTTPReader(SocketChannel sc, ByteBuffer buff) {
 		this.sc = sc;
 		this.buff = buff;
 	}
-	
-	
-	public static boolean readFully(SocketChannel sc, ByteBuffer buff) throws IOException {
-		while (buff.hasRemaining()) {
-			if (sc.read(buff) == -1) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	/**
-	 * 
-	 * 
-	 * 
-	 * @param buff
-	 * @param sb
-	 * @return
-	 */
-	public static boolean isCR(ByteBuffer buff, StringBuilder sb) {
-		buff.flip();
-		var crIsFound = false;
-
-		while (buff.hasRemaining()) {
-			var currentChar = (char) buff.get(); // on reduit notre zone de travail, on avance la position
-			sb.append(currentChar); // On ajoute le caractère dans le sb
-			if (currentChar == '\r') {
-				crIsFound = true;
-				// end of the line
-			} else if (crIsFound && currentChar == '\n') {
-				return true;
-			} else {
-				// Dans le cas ou un caractère après '\r' est different de '\n'
-				crIsFound = false;
-			}
-		}
-		return false;
-	}
 
 	/**
 	 * CR = 'Carriage return' -> '\r' LF = 'Line feed' -> '\n'
+	 * 
 	 * @return The ASCII string terminated by CRLF without the CRLF
 	 *         <p>
 	 *         The method assume that buff is in write mode and leave it in
@@ -69,18 +34,43 @@ public class HTTPReader {
 	 *         buffer is not empty
 	 * @throws IOException HTTPException if the connection is closed before a line
 	 *                     could be read
-	 *                     
+	 * 
 	 */
 	public String readLineCRLF() throws IOException {
 
 		var ASCIIStr = new StringBuilder();
-		while (!isCR(this.buff, ASCIIStr)) {
+		this.buff.flip();
+		var lastCR = false;
+		var finished = false;
+
+		while (true) {
+			while (this.buff.hasRemaining()) {
+				var currentChar = (char) this.buff.get();
+				if (lastCR && currentChar == '\n') {
+					finished = true;
+					break;
+				}
+				if (currentChar == '\r') {
+					lastCR = true;
+				} else {
+					lastCR = false;
+				}
+			}
+			var tmpBuffer = this.buff.duplicate(); // Attention mal nommé, vue sur le buffer
+			tmpBuffer.flip();
+			ASCIIStr.append(StandardCharsets.US_ASCII.decode(tmpBuffer));
+			if (finished) {
+				break;
+			}
+
 			this.buff.clear();
 			if (sc.read(this.buff) == -1) { // La connexion est fermée avant que une ligne puisse être lue
 				throw new HTTPException("Server closed the connection before the end of line.");
 			}
+			this.buff.flip(); // read-mode
 		}
-		this.buff.compact();
+
+		this.buff.compact(); // write mode
 		ASCIIStr.setLength(ASCIIStr.length() - 2); // supprime le CRLF
 		return ASCIIStr.toString();
 	}
@@ -92,29 +82,26 @@ public class HTTPReader {
 	 */
 
 	public HTTPHeader readHeader() throws IOException {
-		
+
 		String firstLineResponse = readLineCRLF();
 		Map<String, String> fieldsMap = new HashMap<String, String>();
-		
+
 		for (var line = this.readLineCRLF(); !line.isEmpty(); line = this.readLineCRLF()) {
 			String[] token = line.split(": ", 2);
-			System.out.println(("token splited : " + token));
 			if (token.length >= 2) {
-				//fieldsMap.merge(token[0], token[1], String::concat); ?
+				// fieldsMap.merge(token[0], token[1], String::concat); ?
 				/*
-				fieldsMap.merge(token[0], token[1], new BiFunction<String, String, String>() {
-					@Override
-					public String apply(String s1, String s2) {
-						return s1 + ";" + s2;
-					}
-					
-				});
-				*/
+				 * fieldsMap.merge(token[0], token[1], new BiFunction<String, String, String>()
+				 * {
+				 * 
+				 * @Override public String apply(String s1, String s2) { return s1 + ";" + s2; }
+				 * });
+				 */
 				fieldsMap.merge(token[0], token[1], (s1, s2) -> s1 + ";" + s2);
 			}
 		}
 		return HTTPHeader.create(firstLineResponse, fieldsMap);
-		
+
 	}
 
 	/**
@@ -124,7 +111,19 @@ public class HTTPReader {
 	 *                     bytes could be read
 	 */
 	public ByteBuffer readBytes(int size) throws IOException {
-		return null;
+		var newBuffer = ByteBuffer.allocate(size);
+		this.buff.flip();
+		// newBuffer.put(this.buff.get());
+
+		while (newBuffer.hasRemaining()) { // consomme le buffer
+			if (this.buff.hasRemaining()) { // Si il reste des bytes dans la zone de travail
+				newBuffer.put(this.buff.get());
+			} else if (!readFully(sc, newBuffer)) { // Rempli tout l'espace qu'il reste dans le buffer
+				throw new HTTPException(); // Le serveur à fermé la socket
+			}
+		}
+		this.buff.compact();
+		return newBuffer;
 	}
 
 	/**
@@ -134,7 +133,41 @@ public class HTTPReader {
 	 */
 
 	public ByteBuffer readChunks() throws IOException {
-		return null;
+
+		int sizeChunk;
+		var sb = new StringBuilder();
+
+		while (true) {
+			var line = this.readLineCRLF().trim();
+			if (line.isEmpty()) {
+				continue;
+			}
+			sizeChunk = Integer.parseInt(line, HEXA_BASE);
+			if (sizeChunk == 0) {
+				break;
+			}
+			var buff = ASCII_CHARSET.decode(this.readBytes(sizeChunk).flip());
+			sb.append(buff.toString());
+		}
+
+		return ASCII_CHARSET.encode(sb.toString()).compact();
+	}
+
+	/**
+	 * Rempli le buffer en lisant la socket
+	 * 
+	 * @param sc
+	 * @param buff
+	 * @return
+	 * @throws IOException
+	 */
+	public static boolean readFully(SocketChannel sc, ByteBuffer buff) throws IOException {
+		while (buff.hasRemaining()) {
+			if (sc.read(buff) == -1) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	public static void main(String[] args) throws IOException {
@@ -159,8 +192,6 @@ public class HTTPReader {
 		System.out.println(reader.readHeader());
 		sc.close();
 
-		
-		/*
 		bb = ByteBuffer.allocate(50);
 		sc = SocketChannel.open();
 		sc.connect(new InetSocketAddress("www.w3.org", 80));
@@ -173,7 +204,6 @@ public class HTTPReader {
 		System.out.println(header.getCharset().decode(content));
 		sc.close();
 
-		
 		bb = ByteBuffer.allocate(50);
 		request = "GET / HTTP/1.1\r\n" + "Host: www.u-pem.fr\r\n" + "\r\n";
 		sc = SocketChannel.open();
@@ -186,7 +216,6 @@ public class HTTPReader {
 		content.flip();
 		System.out.println(header.getCharset().decode(content));
 		sc.close();
-		*/
 
 	}
 }

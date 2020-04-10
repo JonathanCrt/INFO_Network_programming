@@ -41,7 +41,7 @@ public class HTTPReaderTest {
      */
     @Test
     public void testLineReaderLFCR2() throws IOException {
-        FakeHTTPServer server = new FakeHTTPServer("Line1\r\nLine2\nLine2cont\r\n",6);
+        FakeHTTPServer server = new FakeHTTPServer("Line1\r\nLine2\nLine2cont\r\n",7);
         try {
             server.serve();
             SocketChannel sc = SocketChannel.open();
