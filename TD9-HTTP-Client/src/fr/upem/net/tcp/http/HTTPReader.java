@@ -6,8 +6,10 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.logging.Logger;
 
 public class HTTPReader {
@@ -88,6 +90,9 @@ public class HTTPReader {
 
 		for (var line = this.readLineCRLF(); !line.isEmpty(); line = this.readLineCRLF()) {
 			String[] token = line.split(": ", 2);
+			if (token.length != 2) {
+				throw new HTTPException("Badly formed value" + line);
+			}
 			if (token.length >= 2) {
 				// fieldsMap.merge(token[0], token[1], String::concat); ?
 				/*
@@ -97,7 +102,10 @@ public class HTTPReader {
 				 * @Override public String apply(String s1, String s2) { return s1 + ";" + s2; }
 				 * });
 				 */
-				fieldsMap.merge(token[0], token[1], (s1, s2) -> s1 + ";" + s2);
+				var fieldName = token[0];
+				var fieldValue = token[1];
+				// name key, new value , how to combine new and old value (lambda), here concat
+				fieldsMap.merge(fieldName, fieldValue, (oldValue, newValue) -> oldValue + ";" + newValue);
 			}
 		}
 		return HTTPHeader.create(firstLineResponse, fieldsMap);
@@ -119,11 +127,36 @@ public class HTTPReader {
 			if (this.buff.hasRemaining()) { // Si il reste des bytes dans la zone de travail
 				newBuffer.put(this.buff.get());
 			} else if (!readFully(sc, newBuffer)) { // Rempli tout l'espace qu'il reste dans le buffer
-				throw new HTTPException(); // Le serveur à fermé la socket
+				throw new HTTPException("Server closed the connection unexpectedly"); // Le serveur à fermé la socket
 			}
 		}
 		this.buff.compact();
 		return newBuffer;
+	}
+
+	/*
+	 * check if data received by server are correct
+	 */
+	private Optional<ByteBuffer> readChunkUtil() throws IOException {
+		var sizeString = readLineCRLF();
+		int sizeChunck;
+
+		try {
+			sizeChunck = Integer.parseInt(sizeString, HEXA_BASE);
+		} catch (NumberFormatException e) { // Si on est pas en hexa
+			throw new HTTPException("Invalid chunk size: " + sizeString);
+		}
+		if (sizeChunck < 0) {
+			throw new HTTPException(" Invalid chunk size: " + sizeString);
+		}
+		if (sizeChunck == 0) {
+			return Optional.empty();
+		}
+		var content = readBytes(sizeChunck);
+		if (!readLineCRLF().equals("")) { // Vérifie après le contenu du chunk on a bien une ligne vide
+			throw new HTTPException("Chunck not ended by an empty line");
+		}
+		return Optional.of(content);
 	}
 
 	/**
@@ -133,7 +166,37 @@ public class HTTPReader {
 	 */
 
 	public ByteBuffer readChunks() throws IOException {
+		var chunksContents = new ArrayList<ByteBuffer>(); 
+		int totalSize = 0;
 
+		while (true) {
+			var currentChunk = readChunkUtil(); // Tant que j'ai des chuncks, jusqu'a que j'ai un chunck vide - Att WRITE
+												// -MODE !
+			if (!currentChunk.isPresent()) {
+				break;
+			}
+			var content = currentChunk.get();
+			totalSize += content.position(); // On calcule la taille totale de tous le contenu  des chuncks- position()
+												//  car write-mode ! 
+			chunksContents.add(content);
+		}
+		var payload = ByteBuffer.allocate(totalSize); // On créer un "gros" buffer et on met le contenu des chunks dedans
+		for (var bb : chunksContents) {
+			bb.flip();
+			payload.put(bb);
+		}
+		return payload;
+	}
+
+	/**
+	 * @return a ByteBuffer in write-mode containing a content read in chunks mode
+	 * @throws IOException HTTPException if the connection is closed before the end
+	 *                     of the chunks if chunks are ill-formed
+	 */
+
+	public ByteBuffer OldreadChunks() throws IOException {
+		// Il faut vérifier que les données envoyées par le serveur
+		// sont correctes --> méthode optional auxiliaire
 		int sizeChunk;
 		var sb = new StringBuilder();
 
