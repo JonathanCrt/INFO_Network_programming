@@ -5,22 +5,20 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.concurrent.Semaphore;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class BoundedOnDemandConcurrentLongSumServer {
+public class FixedPrestartedLongSumServer {
 
 	private static final Logger logger = Logger.getLogger(IterativeLongSumServer.class.getName());
 	private static final int BUFFER_SIZE = 1024;
 	private final ServerSocketChannel serverSocketChannel;
 	private static final int INT_SIZE = Integer.BYTES;
 	private static final int LONG_SIZE = Long.BYTES;
-	private final Semaphore semaphore;
+	private final int numberPermits;
 
-	public BoundedOnDemandConcurrentLongSumServer(int port, int numberPermits) throws IOException {
+	public FixedPrestartedLongSumServer(int port, int numberPermits) throws IOException {
 		
-		this.semaphore = new Semaphore(numberPermits);
+		this.numberPermits = numberPermits;
 		serverSocketChannel = ServerSocketChannel.open();
 		serverSocketChannel.bind(new InetSocketAddress(port));
 		logger.info(this.getClass().getName() + " starts on port " + port);
@@ -35,25 +33,31 @@ public class BoundedOnDemandConcurrentLongSumServer {
 
 	public void launch() throws IOException, InterruptedException {
 		logger.info("Server started");
-		while (!Thread.interrupted()) {
-			semaphore.acquire(); // retire une autorisation de la Semaphore
-			SocketChannel client = serverSocketChannel.accept();
+		for(int i = 0; i < this.numberPermits; i++) {
 			Thread thread = new Thread(() -> {
-				try {
-					logger.info("Connection accepted from " + client.getRemoteAddress());
-					serve(client);
-				} catch (IOException ioe) {
-					logger.log(Level.INFO, "Connection terminated with client by IOException", ioe.getCause());
-				} catch (InterruptedException ie) {
-					logger.info("Server interrupted");
-					return;
-				} finally {
-					semaphore.release(); // Rend une autorisation
-					silentlyClose(client);
+				SocketChannel client = null;
+				
+				while(!Thread.interrupted()) {
+					try {
+						client = serverSocketChannel.accept();
+						logger.info("Connection accepted from " + client.getRemoteAddress());
+						serve(client);
+					} catch (IOException ioe) {
+						logger.info("Connection terminated with client by IOException" + ioe.getCause());
+					} catch (InterruptedException ie) {
+						logger.info("Server interrupted");
+						return;
+					} finally {
+						silentlyClose(client);
+					}
 				}
+				
 			});
-			thread.start(); 
+			thread.start();
+			
+			
 		}
+	
 	}
 
 	/**
@@ -65,12 +69,12 @@ public class BoundedOnDemandConcurrentLongSumServer {
 	 */
 	private void serve(SocketChannel sc) throws IOException, InterruptedException {
 
-		var bb = ByteBuffer.allocate(BUFFER_SIZE);
+		ByteBuffer bb = ByteBuffer.allocate(BUFFER_SIZE);
 
 		for (;;) {
 			var sumOperands = 0L;
 			bb.clear(); // we clean buffer
-			var bbLimitInt = bb.limit(INT_SIZE);
+			ByteBuffer bbLimitInt = bb.limit(INT_SIZE);
 			if (!readFully(sc, bbLimitInt)) { // if we overflow size of int in bytes
 				return; // we leave method
 			}
@@ -81,7 +85,7 @@ public class BoundedOnDemandConcurrentLongSumServer {
 			var i = 0;
 			while (i < nbOperands) {
 				bb.clear(); // write-mode after
-				var bbLimitLong = bb.limit(LONG_SIZE);
+				ByteBuffer bbLimitLong = bb.limit(LONG_SIZE);
 				if (!readFully(sc, bbLimitLong)) { // if we overflow size of long in bytes
 					return;
 				}
@@ -125,7 +129,7 @@ public class BoundedOnDemandConcurrentLongSumServer {
 	}
 
 	public static void main(String[] args) throws NumberFormatException, IOException, InterruptedException {
-		BoundedOnDemandConcurrentLongSumServer server = new BoundedOnDemandConcurrentLongSumServer(Integer.parseInt(args[0]), Integer.parseInt(args[1]));
+		FixedPrestartedLongSumServer server = new FixedPrestartedLongSumServer(Integer.parseInt(args[0]), Integer.parseInt(args[1]));
 		server.launch();
 	}
 }
