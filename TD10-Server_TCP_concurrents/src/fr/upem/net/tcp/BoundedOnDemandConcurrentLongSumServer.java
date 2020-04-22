@@ -36,7 +36,7 @@ public class BoundedOnDemandConcurrentLongSumServer {
 	public void launch() throws IOException, InterruptedException {
 		logger.info("Server started");
 		while (!Thread.interrupted()) {
-			semaphore.acquire(); // retire une autorisation de la Semaphore
+			semaphore.acquire(); // remove authorization into semaphore - check before accecpt we have an authorization available
 			SocketChannel client = serverSocketChannel.accept();
 			Thread thread = new Thread(() -> {
 				try {
@@ -47,8 +47,8 @@ public class BoundedOnDemandConcurrentLongSumServer {
 				} catch (InterruptedException ie) {
 					logger.info("Server interrupted");
 					return;
-				} finally {
-					semaphore.release(); // Rend une autorisation
+				} finally { // in all case 
+					semaphore.release(); // return an authorization
 					silentlyClose(client);
 				}
 			});
