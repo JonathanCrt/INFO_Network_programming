@@ -12,29 +12,103 @@ import java.util.Scanner;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class FixedPrestartedConcurrentLongSumServerWithTimeout {
+public class FixedPrestartedConcurrentLongSumServerWithTimeoutCorrection {
 
 	private static final Logger logger = Logger.getLogger(IterativeLongSumServer.class.getName());
+	private static final int BUFFER_SIZE = 1024;
 	private final ServerSocketChannel serverSocketChannel;
 	private static final int INT_SIZE = Integer.BYTES;
 	private static final int LONG_SIZE = Long.BYTES;
 	private final int maxClients;
-	private final long timeout;
-	private Thread monitorThread;
+	private final int timeout;
+	
 	
 	private final Thread[] threads;
-	private ThreadData[] threadData;
-	
+	private ThreadDataCorrection[] threadData;
+	private Thread monitor;
+	private Thread console;
 
-	public FixedPrestartedConcurrentLongSumServerWithTimeout(int port, int numberPermits, long timeout)
+	public FixedPrestartedConcurrentLongSumServerWithTimeoutCorrection(int port, int numberPermits, int timeout)
 			throws IOException {
-		this.maxClients = numberPermits;
-		this.timeout = timeout;
-		this.threads = new Thread[maxClients];
-		this.threadData = new ThreadData[maxClients];
 		serverSocketChannel = ServerSocketChannel.open();
 		serverSocketChannel.bind(new InetSocketAddress(port));
 		logger.info(this.getClass().getName() + " starts on port " + port);
+		this.maxClients = numberPermits;
+		this.threads = new Thread[maxClients];
+		this.threadData = new ThreadDataCorrection[maxClients];
+		this.timeout = timeout;
+	}
+
+	private void consoleRun() {
+
+		try (var scan = new Scanner(System.in);) {
+			while (scan.hasNextLine()) {
+				switch (scan.nextLine()) {
+				case "INFO":
+					System.out.println("There are " + this.connectedClients()  + " connected clients."); // == nb workers threads
+					break;
+				case "SHUTDOWN":
+					this.shutdown();
+					break;
+				case "SHUTDOWNNOW":
+					this.shutdownNow();
+					return;
+				}
+			}
+		}
+	}
+
+
+	private int connectedClients() {
+		int cpt = 0;
+		for(ThreadDataCorrection td: threadData) {
+			if(td.isActive()) {
+				cpt++;
+			}
+		}
+		return cpt;
+		
+	}
+	
+	/**
+	 * prevent the acceptance of new clients
+	 */
+	private void shutdown() {
+		try {
+			serverSocketChannel.close();
+		} catch (IOException e) {
+			// ignore exception
+		}
+		
+	}
+	
+	private void shutdownNow() {
+		this.monitor.interrupt();
+		try {
+			serverSocketChannel.close();
+			for(Thread t: threads) {
+				t.interrupt();
+			}
+		} catch (IOException e) {
+			// ignore exception
+		}
+	}
+	
+	
+
+	private void monitorRun() {
+		try {
+			while (!Thread.interrupted()) {
+				Thread.sleep(timeout);
+				for (ThreadDataCorrection td : threadData) {
+					td.closeIfTimeout(timeout);
+				}
+			}
+		} catch (InterruptedException ie) {
+			logger.info("Monitor thread has stopped.");
+		} catch (IOException e) {
+			e.getMessage();
+		}
 	}
 
 	/**
@@ -45,15 +119,14 @@ public class FixedPrestartedConcurrentLongSumServerWithTimeout {
 	 */
 
 	public void launch() throws IOException {
-		logger.info("Server started");
 
-		Arrays.setAll(threadData, i -> new ThreadData());
+		Arrays.setAll(threadData, i -> new ThreadDataCorrection());
 		logger.info("Server started");
 		Arrays.setAll(threads, i ->
 
 		new Thread(() -> {
 			try {
-				ThreadData td = threadData[i];
+				ThreadDataCorrection td = threadData[i];
 				while (!Thread.interrupted()) {
 					SocketChannel client = serverSocketChannel.accept();
 					td.setSocketChannel(client);
@@ -82,108 +155,11 @@ public class FixedPrestartedConcurrentLongSumServerWithTimeout {
 		for (Thread th : threads) {
 			th.start();
 		}
-
-		this.startMonitorThread(threadData, threads);
-		this.consoleCommands(threadData, threads);
-	}
-
-	/**
-	 * Start the monitor which will stop connection
-	 * 
-	 * @param threadData utility class
-	 * @param threads workerThreads array of workers threads
-	 */
-	private void startMonitorThread(ThreadData[] threadData, Thread[] workersThreads) {
-		this.monitorThread = new Thread(() -> {
-			while (!Thread.interrupted()) {
-				try {
-					Thread.sleep(this.timeout);
-				} catch (InterruptedException e) {
-					// ignore
-				}
-				int idx = 0;
-				while (idx < workersThreads.length) {
-					try {
-						threadData[idx].closeIfInactive(this.timeout);
-					} catch (IOException e) {
-						// ignore
-					}
-					idx++;
-				}
-			}
-		});
-		this.monitorThread.start();
-	}
-
-	/**
-	 * helper method to interrupd all works threads
-	 * 
-	 * @param workerThreads array of workers threads
-	 */
-	private void interruptAllWorkersThreads(Thread[] workerThreads) {
-		for (var th : workerThreads) {
-			th.interrupt();
-		}
-	}
-
-	
-	private int connectedClients() {
-		int cpt = 0;
-		for(ThreadData td: threadData) {
-			if(td.isActive()) {
-				cpt++;
-			}
-		}
-		return cpt;
+		this.monitor = new Thread(this::monitorRun);
+		monitor.start();
 		
-	}
-	
-	
-	/**
-	 * prevent the acceptance of new clients
-	 */
-	private void shutdown() {
-		try {
-			serverSocketChannel.close();
-		} catch (IOException e) {
-			// ignore exception
-		}
-		
-	}
-	
-	
-	/**
-	 * To command execution of server
-	 * 
-	 * @param threadData utility class
-	 * @param threads array of workers threads
-	 */
-	private void consoleCommands(ThreadData[] threadData, Thread[] threads) {
-		try (Scanner scanner = new Scanner(System.in)) {
-			while (scanner.hasNext()) {
-				String cmdUpperCase = scanner.next().toUpperCase(); // to avoid problem
-				
-				if (cmdUpperCase == "INFO") {
-					System.out.println("There are " + this.connectedClients()  + " connected clients."); // == nb workers threads
-					break;
-
-				} else if (cmdUpperCase == "SHUTDOWNNOW") {
-					logger.info("[SHUTDOWNNOW] : The Server was stopped.");
-					this.monitorThread.interrupt();
-					this.interruptAllWorkersThreads(threads);
-					break;
-				} else if (cmdUpperCase == "SHUTDOWN") {
-					logger.info("[SHUTDOWN] Server stops after processing the existing clients.");
-					
-					this.shutdown();
-					break;
-				} else {
-					logger.info("[ERROR] Command not exist.");
-				}
-
-			}
-
-		}
+		console = new Thread(this::consoleRun);
+		console.start();
 	}
 
 	/**
@@ -194,7 +170,7 @@ public class FixedPrestartedConcurrentLongSumServerWithTimeout {
 	 * @throws IOException
 	 * @throws InterruptedException
 	 */
-	public void serve(SocketChannel sc, ThreadData td) throws IOException{
+	public void serve(SocketChannel sc, ThreadDataCorrection td) throws IOException{
 		// we know we have 4 octets + 8 octets = number of longs + operands
 		ByteBuffer bbInt = ByteBuffer.allocate(INT_SIZE);
 		ByteBuffer bbLong = ByteBuffer.allocate(LONG_SIZE);
@@ -230,20 +206,24 @@ public class FixedPrestartedConcurrentLongSumServerWithTimeout {
 		}
 	}
 
-	static boolean readFully(SocketChannel sc, ByteBuffer bb, ThreadData threadData) throws IOException {
+	
+
+	static boolean readFully(SocketChannel sc, ByteBuffer bb, ThreadDataCorrection threadData) throws IOException {
 		while (bb.hasRemaining()) {
+			threadData.tick();
 			if (sc.read(bb) == -1) {
 				logger.info("Input stream closed");
 				return false;
 			}
-			threadData.tick();
+
 		}
 		return true;
 	}
 
 	public static void main(String[] args) throws NumberFormatException, IOException, InterruptedException {
-		FixedPrestartedConcurrentLongSumServerWithTimeout server = new FixedPrestartedConcurrentLongSumServerWithTimeout(
+		FixedPrestartedConcurrentLongSumServerWithTimeoutCorrection server = new FixedPrestartedConcurrentLongSumServerWithTimeoutCorrection(
 				Integer.parseInt(args[0]), Integer.parseInt(args[1]), 2000);
 		server.launch();
 	}
+
 }
