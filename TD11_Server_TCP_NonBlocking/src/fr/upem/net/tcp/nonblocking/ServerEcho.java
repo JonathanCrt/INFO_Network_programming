@@ -17,7 +17,7 @@ public class ServerEcho {
 		final private SelectionKey key;
 		final private SocketChannel sc;
 		final private ByteBuffer bb = ByteBuffer.allocate(BUFFER_SIZE);
-		private boolean closed = false;
+		private boolean clientClosedConnection = false;
 
 		private Context(SelectionKey key){
 			this.key = key;
@@ -32,7 +32,19 @@ public class ServerEcho {
 		 * The convention is that buff is in write-mode.
 		 */
 		private void updateInterestOps() {
-			// TODO
+			
+			int ops = 0;
+			if(bb.position() != 0) {
+				ops = SelectionKey.OP_WRITE;
+			}
+			else if(bb.hasRemaining() && !clientClosedConnection) {
+				ops = SelectionKey.OP_READ;
+			} else if(ops == 0) {
+				this.silentlyClose();
+			} else {
+				key.interestOps(ops);
+			}
+			
 		}
 
 		/**
@@ -44,7 +56,10 @@ public class ServerEcho {
 		 * @throws IOException
 		 */
 		private void doRead() throws IOException {
-			// TODO
+			if(sc.read(bb) == -1) {
+				this.clientClosedConnection = true;
+			}
+			this.updateInterestOps();
 		}
 
 		/**
@@ -56,7 +71,10 @@ public class ServerEcho {
 		 * @throws IOException
 		 */
 		private void doWrite() throws IOException {
-			// TODO
+			this.bb.flip();
+			this.sc.write(bb);
+			bb.compact();
+			this.updateInterestOps();
 		}
 
 		private void silentlyClose() {
