@@ -49,14 +49,17 @@ public class ServerSum {
 
 	private void treatKey(SelectionKey key) {
 		printSelectedKey(key); // for debug
-		if (key.isValid() && key.isAcceptable()) {
-			try {
+
+		try {
+			if (key.isValid() && key.isAcceptable()) {
 				doAccept(key);
-			} catch (IOException ioe) {
-				logger.severe("ServerSum have a serious problem.");
-				throw new UncheckedIOException(ioe); // serious problem
 			}
+		} catch (IOException ioe) {
+			logger.severe("ServerSumOneShot have a serious problem.");
+			this.silentlyClose(key);
+			throw new UncheckedIOException(ioe); // serious problem
 		}
+
 		try {
 			if (key.isValid() && key.isWritable()) {
 				doWrite(key);
@@ -65,7 +68,7 @@ public class ServerSum {
 				doRead(key);
 			}
 		} catch (IOException ioe) {
-			logger.warning("[Error from client] Connection closed, because client don't respect SumOneShot protocol.");
+			logger.info("Error has occured while treating the client");
 			silentlyClose(key);
 		}
 	}
@@ -85,28 +88,40 @@ public class ServerSum {
 	 * @throws IOException
 	 */
 	private void doRead(SelectionKey key) throws IOException {
+
+		SocketChannel sc = (SocketChannel) key.channel();
 		ByteBuffer bb = (ByteBuffer) key.attachment();
-		if (((SocketChannel) key.channel()).read(bb) == -1) {
-			silentlyClose(key);
+
+		if (sc.read(bb) == -1) { // client closed connection and we haven't all data
+			logger.info("Client closed the connection");
+			this.silentlyClose(key);
 		}
-		if (!bb.hasRemaining()) {
-			bb.flip(); // read-mode
-			bb.putInt(0, bb.getInt() + bb.getInt()); // write-mode (read-mode)
-			bb.flip(); // read-mode
-			bb.limit(INT_SIZE);
-			key.interestOps(SelectionKey.OP_WRITE);
+		// Write-mode, working area after data
+		if (bb.hasRemaining()) {
+			return;
 		}
+		bb.flip(); // read-mode
+		int sum = bb.getInt() + bb.getInt();
+		bb.clear();
+		bb.putInt(sum);
+		key.interestOps(SelectionKey.OP_WRITE);
 	}
 
+	
 	private void doWrite(SelectionKey key) throws IOException {
+		// need to be in read-mode
+		SocketChannel sc = (SocketChannel) key.channel();
 		ByteBuffer bb = (ByteBuffer) key.attachment();
-		((SocketChannel) key.channel()).write(bb);
-		if (bb.limit() == bb.position()) {
-			bb.compact(); // return to write-mode
-			key.interestOps(SelectionKey.OP_READ);
-		}
-	}
 
+		bb.flip();
+		sc.write(bb);
+		bb.compact();
+		if (bb.position() != 0) {
+			return; // need a new writing
+		}
+		key.interestOps(SelectionKey.OP_READ);
+	}
+	
 	private void silentlyClose(SelectionKey key) {
 		Channel sc = (Channel) key.channel();
 		try {

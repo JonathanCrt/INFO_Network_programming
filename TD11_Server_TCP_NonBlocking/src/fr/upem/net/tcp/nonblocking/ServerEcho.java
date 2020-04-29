@@ -33,17 +33,18 @@ public class ServerEcho {
 		 */
 		private void updateInterestOps() {
 			
-			int ops = 0;
+			int interestOps = 0;
+			if(!clientClosedConnection && bb.hasRemaining()) {
+				interestOps = interestOps | SelectionKey.OP_READ; // set to 1, bit corresponding to read operation
+			}
 			if(bb.position() != 0) {
-				ops = SelectionKey.OP_WRITE;
+				interestOps = interestOps | SelectionKey.OP_WRITE; // set to 1, bit corresponding to write operation
 			}
-			else if(bb.hasRemaining() && !clientClosedConnection) {
-				ops = SelectionKey.OP_READ;
-			} else if(ops == 0) {
+			if(interestOps == 0) {
 				this.silentlyClose();
-			} else {
-				key.interestOps(ops);
+				return;
 			}
+			key.interestOps(interestOps);
 			
 		}
 
@@ -57,7 +58,7 @@ public class ServerEcho {
 		 */
 		private void doRead() throws IOException {
 			if(sc.read(bb) == -1) {
-				this.clientClosedConnection = true;
+				this.clientClosedConnection = true; // client has nothing to send
 			}
 			this.updateInterestOps();
 		}
@@ -73,8 +74,8 @@ public class ServerEcho {
 		private void doWrite() throws IOException {
 			this.bb.flip();
 			this.sc.write(bb);
-			bb.compact();
-			this.updateInterestOps();
+			bb.compact(); // read-mode --> write-mode
+			this.updateInterestOps(); // buffer should be in write-mode
 		}
 
 		private void silentlyClose() {
@@ -137,7 +138,13 @@ public class ServerEcho {
 	}
 
 	private void doAccept(SelectionKey key) throws IOException {
-		// TODO
+		var ssc = serverSocketChannel.accept();
+		if(ssc == null) {
+			return;
+		}
+		ssc.configureBlocking(false);
+		SelectionKey clientKey = ssc.register(this.selector, SelectionKey.OP_READ);
+		clientKey.attach(new Context(clientKey));// we attach context to client
 	}
 
 	private void silentlyClose(SelectionKey key) {

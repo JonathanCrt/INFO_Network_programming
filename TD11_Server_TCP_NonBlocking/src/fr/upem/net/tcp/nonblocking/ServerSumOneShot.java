@@ -24,39 +24,43 @@ public class ServerSumOneShot {
 		serverSocketChannel.bind(new InetSocketAddress(port));
 		selector = Selector.open();
 	}
-	
+
 	/**
-	 * blocks until an incoming packet dice will get a packet selector  completed all selected keys with the key to our selector -> 
-	 * method call treatkey
+	 * blocks until an incoming packet dice will get a packet selector completed all
+	 * selected keys with the key to our selector -> method call treatkey
+	 * 
 	 * @throws IOException
 	 */
 	public void launch() throws IOException {
 		serverSocketChannel.configureBlocking(false);
 		serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
-		
-		try {
-			while (!Thread.interrupted()) {
-				printKeys(); // for debug
-				System.out.println("Starting select");
+
+		while (!Thread.interrupted()) {
+			printKeys(); // for debug
+			System.out.println("Starting select");
+			try {
 				selector.select(this::treatKey);
-				System.out.println("Select finished");
+			} catch (UncheckedIOException tunneled) {
+				throw new IOException(tunneled.getCause());
 			}
-		} catch (UncheckedIOException tunneled) {
-			throw tunneled.getCause();
+			System.out.println("Select finished");
 		}
-		
+
 	}
 
 	private void treatKey(SelectionKey key) {
 		printSelectedKey(key); // for debug
-		if (key.isValid() && key.isAcceptable()) {
-			try {
+
+		try {
+			if (key.isValid() && key.isAcceptable()) {
 				doAccept(key);
-			} catch (IOException ioe) {
-				logger.severe("ServerSumOneShot have a serious problem.");
-				throw new UncheckedIOException(ioe); // serious problem
 			}
+		} catch (IOException ioe) {
+			logger.severe("ServerSumOneShot have a serious problem.");
+			this.silentlyClose(key);
+			throw new UncheckedIOException(ioe); // serious problem
 		}
+
 		try {
 			if (key.isValid() && key.isWritable()) {
 				doWrite(key);
@@ -65,7 +69,7 @@ public class ServerSumOneShot {
 				doRead(key);
 			}
 		} catch (IOException ioe) {
-			logger.warning("[Error from client] Connection closed, because client don't respect SumOneShot protocol.");
+			logger.info("Error has occured while treating the client");
 			silentlyClose(key);
 		}
 	}
@@ -79,32 +83,45 @@ public class ServerSumOneShot {
 		sc.configureBlocking(false);
 		sc.register(selector, SelectionKey.OP_READ, ByteBuffer.allocate(BUFFER_SIZE));
 	}
+
 	/**
 	 * return read-mode
+	 * 
 	 * @param key
 	 * @throws IOException
 	 */
 	private void doRead(SelectionKey key) throws IOException {
+
+		SocketChannel sc = (SocketChannel) key.channel();
 		ByteBuffer bb = (ByteBuffer) key.attachment();
-		if (((SocketChannel) key.channel()).read(bb) == -1) { // client closed connection
-			throw new IOException();
+
+		if (sc.read(bb) == -1) { // client closed connection and we haven't all data
+			logger.info("Client closed the connection before sending the request");
+			this.silentlyClose(key);
 		}
-		if (!bb.hasRemaining()) {
-			bb.flip(); // read-mode
-			bb.putInt(0, bb.getInt() + bb.getInt()); // write-mode (read-mode)
-			bb.flip(); // read-mode
-			bb.limit(INT_SIZE);
-			key.interestOps(SelectionKey.OP_WRITE);
+		// Write-mode, working area after data
+		if (bb.hasRemaining()) {
+			return;
 		}
+		bb.flip(); // read-mode
+		int sum = bb.getInt() + bb.getInt();
+		bb.clear();
+		bb.putInt(sum);
+		key.interestOps(SelectionKey.OP_WRITE);
 	}
 
 	private void doWrite(SelectionKey key) throws IOException {
+		// need to be in read-mode
+		SocketChannel sc = (SocketChannel) key.channel();
 		ByteBuffer bb = (ByteBuffer) key.attachment();
-		((SocketChannel) key.channel()).write(bb);
-		if (bb.position() == bb.limit()) {
-			bb.compact(); // return to write-mode
-			silentlyClose(key);
+
+		bb.flip();
+		sc.write(bb);
+		bb.compact();
+		if (bb.position() != 0) {
+			return; // need a new writing
 		}
+		silentlyClose(key);
 	}
 
 	private void silentlyClose(SelectionKey key) {
