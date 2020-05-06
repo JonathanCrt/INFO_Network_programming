@@ -30,31 +30,33 @@ public class MessageReader implements Reader<Message> {
 		case WAITING_LOGIN:
 			
 			ProcessStatus resultProcessStateLogin = stringReader.process(bb);
-			if(resultProcessStateLogin == ProcessStatus.DONE) {
-				this.message.login = stringReader.get();
-				this.stringReader.reset();
-				this.state = State.WAITING_TEXT;
-			}
 			if (resultProcessStateLogin == ProcessStatus.REFILL) {
 				return ProcessStatus.REFILL;
 			} 
 			if (resultProcessStateLogin == ProcessStatus.ERROR) {
 				return ProcessStatus.ERROR;
 			}
+			if(resultProcessStateLogin == ProcessStatus.DONE) {
+				this.message.login = stringReader.get();
+				this.state = State.WAITING_TEXT;
+				this.stringReader.reset();
+			}
+			
 		case WAITING_TEXT:
 			ProcessStatus resultProcessStateText = stringReader.process(bb);
-			if(resultProcessStateText == ProcessStatus.DONE) {
-				this.message.text = stringReader.get();
-				this.stringReader.reset();
-				this.state = State.DONE;
-				return ProcessStatus.DONE;
-			}
 			if (resultProcessStateText == ProcessStatus.REFILL) {
 				return ProcessStatus.REFILL;
 			} 
 			if (resultProcessStateText == ProcessStatus.ERROR) {
 				return ProcessStatus.ERROR;
 			}
+			if(resultProcessStateText == ProcessStatus.DONE) {
+				this.message.text = stringReader.get();
+				this.state = State.DONE;
+				this.stringReader.reset();
+				return ProcessStatus.DONE;
+			}
+			
 		default:
 			throw new IllegalStateException();
 		}
@@ -70,8 +72,11 @@ public class MessageReader implements Reader<Message> {
 
 	@Override
 	public void reset() {
-		this.stringReader.reset();
+		
 		this.state = State.WAITING_LOGIN;
+		this.stringReader.reset();
+		message.login = null;
+		message.text = null;
 
 	}
 

@@ -30,16 +30,16 @@ public class ServerSumBetter {
          *
          * The convention is that both buffers are in write-mode before the call
          * to process and after the call
-         *
+         * tant que bbIn.remaining > 2 int
          */
 
         private void process() {
-            this.bbin.flip();
-            while(this.bbin.remaining() >= BUFFER_SIZE && this.bbout.remaining() >= Integer.BYTES) {
+            this.bbin.flip(); // read-mode
+            while(this.bbin.remaining() >= 2* Integer.BYTES && this.bbout.remaining() >= Integer.BYTES) { // bbOut = area to add bytes
             	int sum = bbin.getInt() + bbin.getInt();
             	bbout.putInt(sum);
             }
-            this.bbin.compact();
+            this.bbin.compact(); // write-mode
         }
 
         /**
@@ -55,7 +55,7 @@ public class ServerSumBetter {
 
         private void updateInterestOps() {
 			int interestOps = 0;
-			if(!closed && bbin.hasRemaining()) {
+			if(!closed && bbin.hasRemaining()) { // when are we want reading ?
 				interestOps = interestOps | SelectionKey.OP_READ; // set to 1, bit corresponding to read operation
 			}
 			if(bbout.position() != 0) {
@@ -107,13 +107,13 @@ public class ServerSumBetter {
         	this.bbout.flip();
 			this.sc.write(bbout);
 			this.bbout.compact(); // read-mode --> write-mode
-			this.process();
+			this.process(); // 
 			this.updateInterestOps(); // buffer should be in write-mode
         }
 
     }
 
-    static private int BUFFER_SIZE = 2*Integer.BYTES;
+    static private int BUFFER_SIZE = 1024;
     static private Logger logger = Logger.getLogger(ServerSumBetter.class.getName());
 
     private final ServerSocketChannel serverSocketChannel;

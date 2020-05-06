@@ -20,7 +20,7 @@ public class ServerChatInt {
 		final private SocketChannel sc;
 		final private ByteBuffer bbin = ByteBuffer.allocate(BUFFER_SIZE);
 		final private ByteBuffer bbout = ByteBuffer.allocate(BUFFER_SIZE);
-		final private Queue<Integer> queue = new LinkedList<>();
+		final private Queue<Integer> queue = new LinkedList<>(); // warning :  unbounded size
 		final private ServerChatInt server;
 		private boolean closed = false;
 
@@ -61,8 +61,8 @@ public class ServerChatInt {
 		 *
 		 */
 		private void processOut() {
-			while (bbout.remaining() >= Integer.BYTES && !queue.isEmpty()) {
-				this.bbout.putInt(queue.remove());
+			while (bbout.remaining() >= Integer.BYTES && !queue.isEmpty()) { // remanjng : place ti add data
+				this.bbout.putInt(queue.remove()); // take 1st element of queue
 			}
 		}
 
@@ -210,11 +210,12 @@ public class ServerChatInt {
 	 */
 	private void broadcast(Integer msg) {
 		for (SelectionKey sKey : selector.keys()) { // browse all connected clients// keys
-			SelectableChannel currentChannel = sKey.channel();
-			if (!(currentChannel instanceof ServerSocketChannel)) { // server is only member that have access to selector
-				Context context = (Context) sKey.attachment();
-				context.queueMessage(msg);
+			Context context = (Context) sKey.attachment();
+			if(context == null) {
+				continue;
 			}
+			context.queueMessage(msg);
+		
 		}
 	}
 

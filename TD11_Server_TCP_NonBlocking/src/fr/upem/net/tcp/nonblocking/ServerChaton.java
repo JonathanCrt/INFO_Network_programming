@@ -82,11 +82,12 @@ public class ServerChaton {
 		 */
 		private void processOut() {
 			while (!queue.isEmpty()) {
-
+				// deplacer code cocnernant message
 				Message message = this.queue.peek();
 				ByteBuffer loginBB = UTF8.encode(message.login);
 				ByteBuffer textBB = UTF8.encode(message.text);
-
+				// capacity() : encodeur devine la taille du résultat, calcul le plus gros buffer premier buffer avec la zone de taille,
+				// buffer plus grand que néccéssaire
 				if (bbOut.remaining() < 2 * Integer.BYTES + loginBB.limit() + textBB.limit()) {
 					return;
 				}
