@@ -15,8 +15,6 @@ import java.util.Scanner;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.logging.Logger;
 
-import fr.upem.net.tcp.nonblocking.Reader.ProcessStatus;
-
 public class ClientChat {
 
 	static private class Context {
@@ -45,15 +43,18 @@ public class ClientChat {
 			for (;;) {
 				var status = messageReader.process(bbin);
 				switch (status) {
-					case ERROR:
-						this.silentlyClose();
-						break;
-					case REFILL:
-						break;
-					case DONE:
-						this.messageReader.get();
-						this.messageReader.reset();
-						break;
+				case ERROR:
+					this.silentlyClose();
+					// break
+					return;
+				case REFILL:
+					// break
+					return;
+				case DONE:
+					var msg = this.messageReader.get();
+					this.messageReader.reset();
+					System.out.println(msg);
+					break;
 				}
 			}
 		}
@@ -150,8 +151,8 @@ public class ClientChat {
 
 		public void doConnect() throws IOException {
 			if (!sc.finishConnect())
-			      return; // the selector gave a bad hint
-			   key.interestOps(SelectionKey.OP_READ);
+				return; // the selector gave a bad hint
+			key.interestOps(SelectionKey.OP_READ); // if connection is terminated
 		}
 	}
 
@@ -200,8 +201,9 @@ public class ClientChat {
 	private void sendCommand(String msg) throws InterruptedException {
 		synchronized (this.commandQueue) {
 			this.commandQueue.put(msg);
+			this.selector.wakeup();
 		}
-		this.selector.wakeup();
+
 	}
 
 	/**
@@ -209,23 +211,29 @@ public class ClientChat {
 	 */
 
 	private void processCommands() {
-		synchronized (this.commandQueue) {
-			var text = this.commandQueue.poll();
+		while (true) {
+			synchronized (this.commandQueue) {
+				var msg = this.commandQueue.poll();
 
-			if (text != null) {
-				var textSize = text.getBytes(UTF8).length;
-				if (textSize > MAX_STRING_SIZE) {
-					logger.warning(
-							"The message " + text + "with size of " + textSize + " does not comply with the protocol");
-				} else {
-					var loginSize = login.getBytes(UTF8).length;
-					ByteBuffer bb = ByteBuffer.allocate(textSize + loginSize + (Integer.BYTES * 2));
-					bb.putInt(loginSize).put(UTF8.encode(login)).putInt(textSize).put(UTF8.encode(text));
-					this.uniqueContext.queueMessage(bb);
+				if (msg != null) {
+					var msgSize = msg.getBytes(UTF8).length;
+					if (msgSize > MAX_STRING_SIZE) {
+						logger.warning("The message " + msg + "with size of " + msgSize
+								+ " does not comply with the protocol");
+						return;
+					} else {
+						var loginSize = login.getBytes(UTF8).length; // Pas de getBytes
+						ByteBuffer bb = ByteBuffer.allocate(msgSize + loginSize + (Integer.BYTES * 2));
+						bb.putInt(loginSize).put(UTF8.encode(login)).putInt(msgSize).put(UTF8.encode(msg));
+						this.uniqueContext.queueMessage(bb);
+						
+						//this.uniqueContext.queueMessage(new Message(login, msg).asByteBuffer());
+					}
+
 				}
-
 			}
 		}
+
 	}
 
 	public void launch() throws IOException {
@@ -233,7 +241,7 @@ public class ClientChat {
 		var key = sc.register(selector, SelectionKey.OP_CONNECT);
 		uniqueContext = new Context(key);
 		key.attach(uniqueContext);
-		sc.connect(serverAddress);
+		sc.connect(serverAddress); // initialization
 
 		console.start();
 
